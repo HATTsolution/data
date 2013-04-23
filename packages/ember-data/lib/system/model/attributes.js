@@ -1,6 +1,11 @@
-var get = Ember.get;
-
 require("ember-data/system/model/model");
+
+/**
+  @module data
+  @submodule data-model
+*/
+
+var get = Ember.get;
 
 DS.Model.reopenClass({
   attributes: Ember.computed(function() {
@@ -51,7 +56,7 @@ DS.Model.reopen({
   },
 
   attributeWillChange: Ember.beforeObserver(function(record, key) {
-    var reference = get(record, '_reference'),
+    var reference = get(record, 'reference'),
         store = get(record, 'store');
 
     record.send('willSetProperty', { reference: reference, store: store, name: key });
@@ -67,7 +72,11 @@ function getAttr(record, options, key) {
   var value = attributes[key];
 
   if (value === undefined) {
-    value = options.defaultValue;
+    if (typeof options.defaultValue === "function") {
+      value = options.defaultValue();
+    } else {
+      value = options.defaultValue;
+    }
   }
 
   return value;

@@ -1,3 +1,8 @@
+/**
+  @module data
+  @submodule data-model
+*/
+
 var get = Ember.get, set = Ember.set,
     once = Ember.run.once, arrayMap = Ember.ArrayPolyfills.map;
 
@@ -147,9 +152,13 @@ var get = Ember.get, set = Ember.set,
         }
       })
 
-   Note that enter and exit events are called once per transition. If the
-   current state changes, but changes to another child state of the parent,
-   the transition event on the parent will not be triggered.
+  Note that enter and exit events are called once per transition. If the
+  current state changes, but changes to another child state of the parent,
+  the transition event on the parent will not be triggered.
+
+  @class States
+  @namespace DS
+  @extends Ember.State
 */
 
 var stateProperty = Ember.computed(function(key) {
@@ -186,6 +195,7 @@ var didSetProperty = function(manager, context) {
 };
 
 DS.State = Ember.State.extend({
+  isLoading: stateProperty,
   isLoaded: stateProperty,
   isReloading: stateProperty,
   isDirty: stateProperty,
@@ -257,15 +267,6 @@ var DirtyState = DS.State.extend({
   // This means that there are local pending changes, but they
   // have not yet begun to be saved, and are not invalid.
   uncommitted: DS.State.extend({
-    // TRANSITIONS
-    enter: function(manager) {
-      var dirtyType = get(this, 'dirtyType'),
-          record = get(manager, 'record');
-
-      record.withTransaction(function (t) {
-        t.recordBecameDirty(dirtyType, record);
-      });
-    },
 
     // EVENTS
     willSetProperty: willSetProperty,
@@ -278,24 +279,15 @@ var DirtyState = DS.State.extend({
     },
 
     becameClean: function(manager) {
-      var record = get(manager, 'record'),
-          dirtyType = get(this, 'dirtyType');
+      var record = get(manager, 'record');
 
       record.withTransaction(function(t) {
-        t.recordBecameClean(dirtyType, record);
+        t.remove(record);
       });
-
       manager.transitionTo('loaded.materializing');
     },
 
     becameInvalid: function(manager) {
-      var dirtyType = get(this, 'dirtyType'),
-          record = get(manager, 'record');
-
-      record.withTransaction(function (t) {
-        t.recordBecameInFlight(dirtyType, record);
-      });
-
       manager.transitionTo('invalid');
     },
 
@@ -313,14 +305,9 @@ var DirtyState = DS.State.extend({
 
     // TRANSITIONS
     enter: function(manager) {
-      var dirtyType = get(this, 'dirtyType'),
-          record = get(manager, 'record');
+      var record = get(manager, 'record');
 
       record.becameInFlight();
-
-      record.withTransaction(function (t) {
-        t.recordBecameInFlight(dirtyType, record);
-      });
     },
 
     // EVENTS
@@ -329,7 +316,7 @@ var DirtyState = DS.State.extend({
           record = get(manager, 'record');
 
       record.withTransaction(function(t) {
-        t.recordBecameClean('inflight', record);
+        t.remove(record);
       });
 
       manager.transitionTo('saved');
@@ -359,12 +346,12 @@ var DirtyState = DS.State.extend({
     isValid: false,
 
     exit: function(manager) {
-      var record = get(manager, 'record');
-
-      record.withTransaction(function (t) {
-        t.recordBecameClean('inflight', record);
-      });
-    },
+       var record = get(manager, 'record');
+ 
+       record.withTransaction(function (t) {
+         t.remove(record);
+       });
+     },
 
     // EVENTS
     deleteRecord: function(manager) {
@@ -427,10 +414,6 @@ createdState.states.uncommitted.reopen({
   deleteRecord: function(manager) {
     var record = get(manager, 'record');
 
-    record.withTransaction(function(t) {
-      t.recordIsMoving('created', record);
-    });
-
     record.clearRelationships();
     manager.transitionTo('deleted.saved');
   }
@@ -447,18 +430,15 @@ updatedState.states.uncommitted.reopen({
   deleteRecord: function(manager) {
     var record = get(manager, 'record');
 
-    record.withTransaction(function(t) {
-      t.recordIsMoving('updated', record);
-    });
-
     manager.transitionTo('deleted');
-    get(manager, 'record').clearRelationships();
+    record.clearRelationships();
   }
 });
 
 var states = {
   rootState: Ember.State.create({
     // FLAGS
+    isLoading: false,
     isLoaded: false,
     isReloading: false,
     isDirty: false,
@@ -493,6 +473,9 @@ var states = {
     // Usually, this process is asynchronous, using an
     // XHR to retrieve the data.
     loading: DS.State.create({
+      // FLAGS
+      isLoading: true,
+
       // EVENTS
       loadedData: didChangeData,
 
@@ -597,9 +580,6 @@ var states = {
           // clear relationships before moving to deleted state
           // otherwise it fails
           record.clearRelationships();
-          record.withTransaction(function(t) {
-            t.recordIsMoving('updated', record);
-          });
           manager.transitionTo('deleted.saved');
         },
 
@@ -610,6 +590,8 @@ var states = {
           } else {
             record.trigger('didUpdate', record);
           }
+
+          record.trigger('didCommit', record);
         }
       }),
 
@@ -639,7 +621,7 @@ var states = {
         var record = get(manager, 'record'),
             store = get(record, 'store');
 
-        store.removeFromRecordArrays(record);
+        store.recordArrayManager.remove(record);
       },
 
       // SUBSTATES
@@ -648,14 +630,6 @@ var states = {
       // state. It will exit this state when the record's
       // transaction starts to commit.
       uncommitted: DS.State.create({
-        // TRANSITIONS
-        enter: function(manager) {
-          var record = get(manager, 'record');
-
-          record.withTransaction(function(t) {
-            t.recordBecameDirty('deleted', record);
-          });
-        },
 
         // EVENTS
         willCommit: function(manager) {
@@ -672,9 +646,8 @@ var states = {
           var record = get(manager, 'record');
 
           record.withTransaction(function(t) {
-            t.recordBecameClean('deleted', record);
+            t.remove(record);
           });
-
           manager.transitionTo('loaded.materializing');
         }
       }),
@@ -692,10 +665,6 @@ var states = {
           var record = get(manager, 'record');
 
           record.becameInFlight();
-
-          record.withTransaction(function (t) {
-            t.recordBecameInFlight('deleted', record);
-          });
         },
 
         // EVENTS
@@ -703,9 +672,9 @@ var states = {
           var record = get(manager, 'record');
 
           record.withTransaction(function(t) {
-            t.recordBecameClean('inflight', record);
+            t.remove(record);
           });
-
+      
           manager.transitionTo('saved');
 
           manager.send('invokeLifecycleCallbacks');
@@ -729,6 +698,7 @@ var states = {
         invokeLifecycleCallbacks: function(manager) {
           var record = get(manager, 'record');
           record.trigger('didDelete', record);
+          record.trigger('didCommit', record);
         }
       })
     }),
