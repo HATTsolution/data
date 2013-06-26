@@ -1,5 +1,6 @@
 bin/
 .bundle
+bundle
 tmp/
 tests/source/
 dist/
@@ -13,3 +14,4 @@ tests/ember-data-tests.js
 *gem
 
 docs/build/
+docs/node_modules/

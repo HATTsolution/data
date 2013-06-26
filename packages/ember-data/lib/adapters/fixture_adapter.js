@@ -8,6 +8,7 @@ require('ember-data/serializers/fixture_serializer');
 */
 
 var get = Ember.get, fmt = Ember.String.fmt,
+    indexOf = Ember.EnumerableUtils.indexOf,
     dump = Ember.get(window, 'JSON.stringify') || function(object) { return object.toString(); };
 
 /**
@@ -39,8 +40,9 @@ DS.FixtureAdapter = DS.Adapter.extend({
     if (type.FIXTURES) {
       var fixtures = Ember.A(type.FIXTURES);
       return fixtures.map(function(fixture){
-        if(!fixture.id){
-          throw new Error(fmt('the id property must be defined for fixture %@', [dump(fixture)]));
+        var fixtureIdType = typeof fixture.id;
+        if(fixtureIdType !== "number" && fixtureIdType !== "string"){
+          throw new Error(fmt('the id property must be defined as a number or string for fixture %@', [dump(fixture)]));
         }
         fixture.id = fixture.id + '';
         return fixture;
@@ -106,7 +108,7 @@ DS.FixtureAdapter = DS.Adapter.extend({
 
     if (fixtures) {
       fixtures = fixtures.filter(function(item) {
-        return ids.indexOf(item.id) !== -1;
+        return indexOf(ids, item.id) !== -1;
       });
     }
 
@@ -178,7 +180,7 @@ DS.FixtureAdapter = DS.Adapter.extend({
     var existingFixture = this.findExistingFixture(type, record);
 
     if(existingFixture) {
-      var index = type.FIXTURES.indexOf(existingFixture);
+      var index = indexOf(type.FIXTURES, existingFixture);
       type.FIXTURES.splice(index, 1);
       return true;
     }

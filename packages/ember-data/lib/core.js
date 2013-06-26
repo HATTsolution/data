@@ -1,10 +1,15 @@
 /**
   @module data
-
   @main data
 */
 
+/**
+  All Ember Data methods and functions are defined inside of this namespace. 
+
+  @class DS
+  @static
+*/
+
 window.DS = Ember.Namespace.create({
-  // this one goes past 11
-  CURRENT_API_REVISION: 12
+  VERSION: '0.13'
 });

@@ -1,3 +1,4 @@
+![Ember Data Warning](docs/images/ember-data-in-progress.png)
 ## Ember Data [![Build Status](https://secure.travis-ci.org/emberjs/data.png?branch=master)](http://travis-ci.org/emberjs/data)
 
 Ember Data is a library for loading data from a persistence layer (such as
@@ -32,7 +33,7 @@ Yes.
 No. The API should not be considered stable until 1.0. Breaking changes,
 indexed by date, are listed in [`BREAKING_CHANGES.md`](https://github.com/emberjs/data/blob/master/BREAKING_CHANGES.md).
 
-A [guide is provided on the Ember.js site](http://emberjs.com/guides/models/) that is accurate as of revision 11.
+A [guide is provided on the Ember.js site](http://emberjs.com/guides/models/) that is accurate as of revision 12.
 
 #### Getting ember-data
 

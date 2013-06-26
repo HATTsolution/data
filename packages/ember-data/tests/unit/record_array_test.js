@@ -1,4 +1,6 @@
 var get = Ember.get, set = Ember.set;
+var indexOf = Ember.EnumerableUtils.indexOf;
+
 var Person;
 
 module("DS.RecordArray");
@@ -99,6 +101,10 @@ test("a newly created record is removed from a record array when it is deleted",
   scumbag.deleteRecord();
 
   equal(get(recordArray, 'length'), 3, "record is removed from the record array");
+
+  recordArray.objectAt(0).set('name', 'toto');
+
+  equal(get(recordArray, 'length'), 3, "record is still removed from the record array");
 });
 
 test("a record array returns undefined when asking for a member outside of its content Array's range", function() {
@@ -124,11 +130,11 @@ test("a record array should be able to be enumerated in any order", function() {
 });
 
 var shouldContain = function(array, item) {
-  ok(array.indexOf(item) !== -1, "array should contain "+item.get('name'));
+  ok(indexOf(array, item) !== -1, "array should contain "+item.get('name'));
 };
 
 var shouldNotContain = function(array, item) {
-  ok(array.indexOf(item) === -1, "array should not contain "+item.get('name'));
+  ok(indexOf(array, item) === -1, "array should not contain "+item.get('name'));
 };
 
 test("an AdapterPopulatedRecordArray knows if it's loaded or not", function() {

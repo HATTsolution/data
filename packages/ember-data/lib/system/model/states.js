@@ -169,7 +169,11 @@ var stateProperty = Ember.computed(function(key) {
 }).property();
 
 var hasDefinedProperties = function(object) {
-  for (var name in object) {
+  // Ignore internal property defined by simulated `Ember.create`.
+  var names = Ember.keys(object);
+  var i, l, name;
+  for (i = 0, l = names.length; i < l; i++ ) {
+    name = names[i];
     if (object.hasOwnProperty(name) && object[name]) { return true; }
   }
 
@@ -311,6 +315,12 @@ var DirtyState = DS.State.extend({
     },
 
     // EVENTS
+
+    materializingData: function(manager) {
+      set(manager, 'lastDirtyType', get(this, 'dirtyType'));
+      manager.transitionTo('materializing');
+    },
+
     didCommit: function(manager) {
       var dirtyType = get(this, 'dirtyType'),
           record = get(manager, 'record');
@@ -322,6 +332,8 @@ var DirtyState = DS.State.extend({
       manager.transitionTo('saved');
       manager.send('invokeLifecycleCallbacks', dirtyType);
     },
+
+    didChangeData: didChangeData,
 
     becameInvalid: function(manager, errors) {
       var record = get(manager, 'record');
@@ -347,7 +359,7 @@ var DirtyState = DS.State.extend({
 
     exit: function(manager) {
        var record = get(manager, 'record');
- 
+
        record.withTransaction(function (t) {
          t.remove(record);
        });
@@ -481,6 +493,11 @@ var states = {
 
       materializingData: function(manager) {
         manager.transitionTo('loaded.materializing.firstTime');
+      },
+
+      becameError: function(manager) {
+        manager.transitionTo('error');
+        manager.send('invokeLifecycleCallbacks');
       }
     }),
 
@@ -583,6 +600,16 @@ var states = {
           manager.transitionTo('deleted.saved');
         },
 
+        didCommit: function(manager) {
+          var record = get(manager, 'record');
+
+          record.withTransaction(function(t) {
+            t.remove(record);
+          });
+
+          manager.send('invokeLifecycleCallbacks', get(manager, 'lastDirtyType'));
+        },
+
         invokeLifecycleCallbacks: function(manager, dirtyType) {
           var record = get(manager, 'record');
           if (dirtyType === 'created') {
@@ -674,7 +701,7 @@ var states = {
           record.withTransaction(function(t) {
             t.remove(record);
           });
-      
+
           manager.transitionTo('saved');
 
           manager.send('invokeLifecycleCallbacks');

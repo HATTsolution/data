@@ -6,6 +6,7 @@ require('ember-data/serializers/json_serializer');
 */
 
 var get = Ember.get, set = Ember.set, merge = Ember.merge;
+var forEach = Ember.EnumerableUtils.forEach;
 
 function loaderFor(store) {
   return {
@@ -24,7 +25,7 @@ function loaderFor(store) {
     populateArray: Ember.K,
 
     sideload: function(type, data) {
-      return store.load(type, data);
+      return store.adapterForType(type).load(store, type, data);
     },
 
     sideloadMany: function(type, array) {
@@ -60,7 +61,6 @@ DS.loaderFor = loaderFor;
   To tell your store which adapter to use, set its `adapter` property:
 
       App.store = DS.Store.create({
-        revision: 3,
         adapter: App.MyAdapter.create()
       });
 
@@ -145,7 +145,7 @@ DS.Adapter = Ember.Object.extend(DS._Mappable, {
   */
   load: function(store, type, payload) {
     var loader = loaderFor(store);
-    get(this, 'serializer').extractRecordRepresentation(loader, type, payload);
+    return get(this, 'serializer').extractRecordRepresentation(loader, type, payload);
   },
 
   /**
@@ -655,7 +655,7 @@ DS.Adapter = Ember.Object.extend(DS._Mappable, {
       defaultValue: function() { return Ember.OrderedSet.create(); }
     });
 
-    enumerable.forEach(function(item) {
+    forEach(enumerable, function(item) {
       map.get(item.constructor).add(item);
     });
 

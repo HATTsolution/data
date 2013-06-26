@@ -12,6 +12,7 @@
         "ember_deprecateFunc",
         "require",
         "equal",
+        "notEqual",
         "asyncTest",
         "test",
         "raises",
@@ -25,7 +26,8 @@
         "minispade",
         "async",
         "invokeAsync",
-        "jQuery"
+        "jQuery",
+        "expectAssertion"
     ],
 
     "node" : false,
@@ -52,5 +54,6 @@
     "undef": true,
     "sub": true,
     "strict": false,
-    "white": false
+    "white": false,
+    "eqnull": true
 }

@@ -95,13 +95,13 @@
     });
 
     DS.Store.reopen({
+      save: syncForTest(),
       createRecord: syncForTest(),
       deleteRecord: syncForTest(),
       load: syncForTest(),
       loadMany: syncForTest(),
       filter: syncForTest(),
       find: syncForTest(),
-      findByClientId: syncForTest(),
       findMany: syncForTest(),
       didSaveRecord: syncForTest(),
       didSaveRecords: syncForTest(),
@@ -135,4 +135,5 @@
     spade:   'ember-spade.js',
     build:   'ember-data.js'
   };
+
 })();

@@ -10,7 +10,7 @@ var retrieveFromCurrentState = Ember.computed(function(key, value) {
 }).property('stateManager.currentState').readOnly();
 
 /**
-  
+
   The model class that all Ember Data records descend from.
 
   @module data
@@ -22,6 +22,7 @@ var retrieveFromCurrentState = Ember.computed(function(key, value) {
   @extends Ember.Object
   @constructor
 */
+
 DS.Model = Ember.Object.extend(Ember.Evented, LoadPromise, {
   isLoading: retrieveFromCurrentState,
   isLoaded: retrieveFromCurrentState,
@@ -104,14 +105,14 @@ DS.Model = Ember.Object.extend(Ember.Evented, LoadPromise, {
 
   /**
     Fired when the record is deleted.
-    
+
     @event didDelete
   */
   didDelete: Ember.K,
 
   /**
     Fired when the record becomes invalid.
-    
+
     @event becameInvalid
   */
   becameInvalid: Ember.K,
@@ -125,7 +126,7 @@ DS.Model = Ember.Object.extend(Ember.Evented, LoadPromise, {
 
   data: Ember.computed(function() {
     if (!this._data) {
-      this.materializeData();
+      this.setupData();
     }
 
     return this._data;
@@ -155,7 +156,6 @@ DS.Model = Ember.Object.extend(Ember.Evented, LoadPromise, {
   },
 
   _setup: function() {
-    this._relationshipChanges = {};
     this._changesToSync = {};
   },
 
@@ -178,19 +178,6 @@ DS.Model = Ember.Object.extend(Ember.Evented, LoadPromise, {
 
   didChangeData: function() {
     this.send('didChangeData');
-  },
-
-  /**
-    Reload the record from the adapter.
-
-    This will only work if the record has already finished loading
-    and has not yet been modified (`isLoaded` but not `isDirty`,
-    or `isSaving`).
-
-    @method reload
-  */
-  reload: function() {
-    this.send('reloadRecord');
   },
 
   deleteRecord: function() {
@@ -216,7 +203,7 @@ DS.Model = Ember.Object.extend(Ember.Evented, LoadPromise, {
   updateRecordArrays: function() {
     var store = get(this, 'store');
     if (store) {
-      store.dataWasUpdated(this.constructor, get(this, 'reference'), this);
+      store.dataWasUpdated(this.constructor, get(this, '_reference'), this);
     }
   },
 
@@ -285,7 +272,7 @@ DS.Model = Ember.Object.extend(Ember.Evented, LoadPromise, {
     Ember.run.once(this, this.updateRecordArrays);
   },
 
-  setupData: function(prematerialized) {
+  setupData: function() {
     this._data = {
       attributes: {},
       belongsTo: {},
@@ -309,7 +296,11 @@ DS.Model = Ember.Object.extend(Ember.Evented, LoadPromise, {
 
   materializeHasMany: function(name, tuplesOrReferencesOrOpaque) {
     var tuplesOrReferencesOrOpaqueType = typeof tuplesOrReferencesOrOpaque;
-    if (tuplesOrReferencesOrOpaque && tuplesOrReferencesOrOpaqueType !== 'string' && tuplesOrReferencesOrOpaque.length > 1) { Ember.assert('materializeHasMany expects tuples, references or opaque token, not ' + tuplesOrReferencesOrOpaque[0], tuplesOrReferencesOrOpaque[0].hasOwnProperty('id') && tuplesOrReferencesOrOpaque[0].type); }
+
+    if (tuplesOrReferencesOrOpaque && tuplesOrReferencesOrOpaqueType !== 'string' && tuplesOrReferencesOrOpaque.length > 1) {
+      Ember.assert('materializeHasMany expects tuples, references or opaque token, not ' + tuplesOrReferencesOrOpaque[0], tuplesOrReferencesOrOpaque[0].hasOwnProperty('id') && tuplesOrReferencesOrOpaque[0].type);
+    }
+
     if( tuplesOrReferencesOrOpaqueType === "string" ) {
       this._data.hasMany[name] = tuplesOrReferencesOrOpaque;
     } else {
@@ -390,18 +381,54 @@ DS.Model = Ember.Object.extend(Ember.Evented, LoadPromise, {
   becameInFlight: function() {
   },
 
-  // FOR USE BY THE BASIC ADAPTER
+  /**
+    @private
 
+  */
+  resolveOn: function(successEvent) {
+    var model = this;
+
+    return new Ember.RSVP.Promise(function(resolve, reject) {
+      function success() {
+        this.off('becameError', error);
+        this.off('becameInvalid', error);
+        resolve(this);
+      }
+      function error() {
+        this.off(successEvent, success);
+        reject(this);
+      }
+
+      model.one(successEvent, success);
+      model.one('becameError', error);
+      model.one('becameInvalid', error);
+    });
+  },
+
+  /**
+    Save the record.
+
+    @method save
+  */
   save: function() {
     this.get('store').scheduleSave(this);
 
-    var promise = new Ember.RSVP.Promise();
+    return this.resolveOn('didCommit');
+  },
 
-    this.one('didCommit', this, function() {
-      promise.resolve(this);
-    });
+  /**
+    Reload the record from the adapter.
 
-    return promise;
+    This will only work if the record has already finished loading
+    and has not yet been modified (`isLoaded` but not `isDirty`,
+    or `isSaving`).
+
+    @method reload
+  */
+  reload: function() {
+    this.send('reloadRecord');
+
+    return this.resolveOn('didReload');
   },
 
   // FOR USE DURING COMMIT PROCESS
@@ -463,7 +490,23 @@ var storeAlias = function(methodName) {
 };
 
 DS.Model.reopenClass({
-  isLoaded: storeAlias('recordIsLoaded'),
+
+  /** @private
+    Alias DS.Model's `create` method to `_create`. This allows us to create DS.Model
+    instances from within the store, but if end users accidentally call `create()`
+    (instead of `createRecord()`), we can raise an error.
+  */
+  _create: DS.Model.create,
+
+  /** @private
+
+    Override the class' `create()` method to raise an error. This prevents end users
+    from inadvertently calling `create()` instead of `createRecord()`. The store is
+    still able to create instances by calling the `_create()` method.
+  */
+  create: function() {
+    throw new Ember.Error("You should not call `create` on a model. Instead, call `createRecord` with the attributes you would like to set.");
+  },
 
   /**
     See {{#crossLink "DS.Store/find:method"}}`DS.Store.find()`{{/crossLink}}.
@@ -499,12 +542,6 @@ DS.Model.reopenClass({
     @return {DS.FilteredRecordArray}
   */
   filter: storeAlias('filter'),
-
-  _create: DS.Model.create,
-
-  create: function() {
-    throw new Ember.Error("You should not call `create` on a model. Instead, call `createRecord` with the attributes you would like to set.");
-  },
 
   /**
     See {{#crossLink "DS.Store/createRecord:method"}}`DS.Store.createRecord()`{{/crossLink}}.

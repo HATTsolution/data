@@ -41,7 +41,7 @@ DS.RecordArrayManager = Ember.Object.extend({
           recordArrays = this.filteredRecordArrays.get(type),
           filter;
 
-      recordArrays.forEach(function(array) {
+      forEach(recordArrays, function(array) {
         filter = get(array, 'filterFunction');
         this.updateRecordArray(array, filter, type, reference);
       }, this);
@@ -58,6 +58,8 @@ DS.RecordArrayManager = Ember.Object.extend({
         reference.loadingRecordArrays = [];
       }
     }, this);
+
+    this.changedReferences = [];
   },
 
   /**
@@ -100,10 +102,10 @@ DS.RecordArrayManager = Ember.Object.extend({
     @param {DS.Model} record
   */
   remove: function(record) {
-    var reference = get(record, 'reference');
+    var reference = get(record, '_reference');
     var recordArrays = reference.recordArrays || [];
 
-    recordArrays.forEach(function(array) {
+    forEach(recordArrays, function(array) {
       array.removeReference(reference);
     });
   },
@@ -161,7 +163,7 @@ DS.RecordArrayManager = Ember.Object.extend({
       store: this.store
     });
 
-    references.forEach(function(reference) {
+    forEach(references, function(reference) {
       var arrays = this.recordArraysForReference(reference);
       arrays.add(manyArray);
     }, this);

@@ -19,17 +19,33 @@ DS.belongsTo = function(type, options) {
     }
 
     var data = get(this, 'data').belongsTo,
-        store = get(this, 'store'), id;
+        store = get(this, 'store'), belongsTo;
 
-    id = data[key];
+    belongsTo = data[key];
 
-    if(isNone(id)) {
+    // TODO (tomdale) The value of the belongsTo in the data hash can be
+    // one of:
+    // 1. null/undefined
+    // 2. a record reference
+    // 3. a tuple returned by the serializer's polymorphism code
+    //
+    // We should really normalize #3 to be the same as #2 to reduce the
+    // complexity here.
+
+    if (isNone(belongsTo)) {
       return null;
-    } else if (id.clientId) {
-      return store.recordForReference(id);
-    } else {
-      return store.findById(id.type, id.id);
     }
+
+    // The data has been normalized to a record reference, so
+    // just ask the store for the record for that reference,
+    // materializing it if necessary.
+    if (belongsTo.clientId) {
+      return store.recordForReference(belongsTo);
+    }
+
+    // The data has been normalized into a type/id pair by the
+    // serializer's polymorphism code.
+    return store.findById(belongsTo.type, belongsTo.id);
   }).property('data').meta(meta);
 };
 
@@ -45,10 +61,10 @@ DS.Model.reopen({
     if (get(record, 'isLoaded')) {
       var oldParent = get(record, key);
 
-      var childReference = get(record, 'reference'),
+      var childReference = get(record, '_reference'),
           store = get(record, 'store');
       if (oldParent){
-        var change = DS.RelationshipChange.createChange(childReference, get(oldParent, 'reference'), store, { key: key, kind:"belongsTo", changeType: "remove" });
+        var change = DS.RelationshipChange.createChange(childReference, get(oldParent, '_reference'), store, { key: key, kind:"belongsTo", changeType: "remove" });
         change.sync();
         this._changesToSync[key] = change;
       }
@@ -60,9 +76,9 @@ DS.Model.reopen({
     if (get(record, 'isLoaded')) {
       var newParent = get(record, key);
       if(newParent){
-        var childReference = get(record, 'reference'),
+        var childReference = get(record, '_reference'),
             store = get(record, 'store');
-        var change = DS.RelationshipChange.createChange(childReference, get(newParent, 'reference'), store, { key: key, kind:"belongsTo", changeType: "add" });
+        var change = DS.RelationshipChange.createChange(childReference, get(newParent, '_reference'), store, { key: key, kind:"belongsTo", changeType: "add" });
         change.sync();
         if(this._changesToSync[key]){
           DS.OneToManyChange.ensureSameTransaction([change, this._changesToSync[key]], store);

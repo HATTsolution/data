@@ -225,24 +225,24 @@ DS.Serializer = Ember.Object.extend({
   extractHasMany: mustImplement('extractHasMany'),
   extractBelongsTo: mustImplement('extractBelongsTo'),
 
-  extractRecordRepresentation: function(loader, type, json, shouldSideload) {
+  extractRecordRepresentation: function(loader, type, data, shouldSideload) {
     var prematerialized = {}, reference;
 
     if (shouldSideload) {
-      reference = loader.sideload(type, json);
+      reference = loader.sideload(type, data);
     } else {
-      reference = loader.load(type, json);
+      reference = loader.load(type, data);
     }
 
     this.eachEmbeddedHasMany(type, function(name, relationship) {
-      var embeddedData = json[this.keyFor(relationship)];
+      var embeddedData = this.extractEmbeddedData(data, this.keyFor(relationship));
       if (!isNone(embeddedData)) {
         this.extractEmbeddedHasMany(loader, relationship, embeddedData, reference, prematerialized);
       }
     }, this);
 
     this.eachEmbeddedBelongsTo(type, function(name, relationship) {
-      var embeddedData = json[this.keyFor(relationship)];
+      var embeddedData = this.extractEmbeddedData(data, this.keyFor(relationship));
       if (!isNone(embeddedData)) {
         this.extractEmbeddedBelongsTo(loader, relationship, embeddedData, reference, prematerialized);
       }
@@ -265,6 +265,16 @@ DS.Serializer = Ember.Object.extend({
       var embeddedType = this.embeddedType(parent.type, relationship.key);
       if (embeddedType === 'always') {
         reference.parent = parent;
+      }
+
+      // If the embedded children have an inverse belongs-to, set the
+      // inverse to the current record in their prematerialized data.
+      var parentType = relationship.parentType,
+          inverse = parentType.inverseFor(relationship.key);
+
+      if (inverse) {
+        var inverseName = inverse.name;
+        reference.prematerialized[inverseName] = parent;
       }
 
       return reference;
@@ -292,18 +302,27 @@ DS.Serializer = Ember.Object.extend({
 
     The `extractEmbeddedType` hook is called with:
 
-    * the serialized representation being built
-    * the serialized id (after calling the `serializeId` hook)
+    * the relationship
+    * the serialized representation of the record
 
     By default, it returns the type of the relationship.
 
     @method extractEmbeddedType
     @param {Object} relationship an object representing the relationship
-    @param {any} data the serialized representation that is being built
+    @param {any} data the serialized representation of the record
   */
   extractEmbeddedType: function(relationship, data) {
     return relationship.type;
   },
+
+  /**
+    A hook you need to implement in order to extract
+    the data associated with an embedded record.
+
+    @param {any} data the serialized representation of the record
+    @param {String} key the key that represents the embedded record
+   */
+  extractEmbeddedData: mustImplement(),
 
   //.......................
   //. SERIALIZATION HOOKS
@@ -379,11 +398,14 @@ DS.Serializer = Ember.Object.extend({
     this is the opportunity for the serializer to, for example,
     convert numerical IDs back into number form.
 
+    Null or undefined ids will resolve to a null value.
+
     @param {String} id the id from the record
     @returns {any} the serialized representation of the id
   */
   serializeId: function(id) {
-    if (isNaN(id)) { return id; }
+    if(Ember.isEmpty(id)) { return null; }
+    if(isNaN(+id)) { return id; }
     return +id;
   },
 
@@ -728,7 +750,7 @@ DS.Serializer = Ember.Object.extend({
   deserializeValue: function(value, attributeType) {
     var transform = this.transforms ? this.transforms[attributeType] : null;
 
-    Ember.assert("You tried to use a attribute type (" + attributeType + ") that has not been registered", transform);
+    Ember.assert("You tried to use an attribute type (" + attributeType + ") that has not been registered", transform);
     return transform.deserialize(value);
   },
 
@@ -749,21 +771,21 @@ DS.Serializer = Ember.Object.extend({
     record.materializeAttribute(attributeName, value);
   },
 
-  materializeRelationships: function(record, hash, prematerialized) {
+  materializeRelationships: function(record, serialized, prematerialized) {
     record.eachRelationship(function(name, relationship) {
       if (relationship.kind === 'hasMany') {
         if (prematerialized && prematerialized.hasOwnProperty(name)) {
           var tuplesOrReferencesOrOpaque = this._convertPrematerializedHasMany(relationship.type, prematerialized[name]);
           record.materializeHasMany(name, tuplesOrReferencesOrOpaque);
         } else {
-          this.materializeHasMany(name, record, hash, relationship, prematerialized);
+          this.materializeHasMany(name, record, serialized, relationship, prematerialized);
         }
       } else if (relationship.kind === 'belongsTo') {
         if (prematerialized && prematerialized.hasOwnProperty(name)) {
           var tupleOrReference = this._convertTuple(relationship.type, prematerialized[name]);
           record.materializeBelongsTo(name, tupleOrReference);
         } else {
-          this.materializeBelongsTo(name, record, hash, relationship, prematerialized);
+          this.materializeBelongsTo(name, record, serialized, relationship, prematerialized);
         }
       }
     }, this);
@@ -1280,6 +1302,6 @@ DS.Serializer = Ember.Object.extend({
     } else {
       return name;
     }
-  },
+  }
 });
 

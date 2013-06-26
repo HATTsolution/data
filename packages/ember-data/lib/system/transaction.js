@@ -92,8 +92,6 @@ DS.Transaction = Ember.Object.extend({
   */
   init: function() {
     set(this, 'records', Ember.OrderedSet.create());
-
-    set(this, 'relationships', Ember.OrderedSet.create());
   },
 
   /**
@@ -120,7 +118,7 @@ DS.Transaction = Ember.Object.extend({
 
   isDefault: Ember.computed(function() {
     return this === get(this, 'store.defaultTransaction');
-  }),
+  }).volatile(),
 
   /**
     Adds an existing record to this transaction. Only records without
@@ -132,16 +130,57 @@ DS.Transaction = Ember.Object.extend({
   add: function(record) {
     Ember.assert("You must pass a record into transaction.add()", record instanceof DS.Model);
 
+    var store = get(this, 'store');
+    var adapter = get(store, '_adapter');
+    var serializer = get(adapter, 'serializer');
+    serializer.eachEmbeddedRecord(record, function(embeddedRecord, embeddedType) {
+      if (embeddedType === 'load') { return; }
+
+      this.add(embeddedRecord);
+    }, this);
+
     this.adoptRecord(record);
   },
 
-  relationshipBecameDirty: function(relationship) {
-    get(this, 'relationships').add(relationship);
-  },
+  relationships: Ember.computed(function() {
+    var relationships = Ember.OrderedSet.create(),
+        records = get(this, 'records'),
+        store = get(this, 'store');
 
-  relationshipBecameClean: function(relationship) {
-    get(this, 'relationships').remove(relationship);
-  },
+    forEach(records, function(record) {
+      var reference = get(record, '_reference');
+      var changes = store.relationshipChangesFor(reference);
+      for(var i = 0; i < changes.length; i++) {
+        relationships.add(changes[i]);
+      }
+    });
+
+    return relationships;
+  }).volatile(),
+
+  commitDetails: Ember.computed(function() {
+    var commitDetails = Ember.MapWithDefault.create({
+      defaultValue: function() {
+        return {
+          created: Ember.OrderedSet.create(),
+          updated: Ember.OrderedSet.create(),
+          deleted: Ember.OrderedSet.create()
+        };
+      }
+    });
+
+    var records = get(this, 'records'),
+        store = get(this, 'store');
+
+    forEach(records, function(record) {
+      if(!get(record, 'isDirty')) return;
+      record.send('willCommit');
+      var adapter = store.adapterForType(record.constructor);
+      commitDetails.get(adapter)[get(record, 'dirtyType')].add(record);
+    });
+
+    return commitDetails;
+  }).volatile(),
 
   /**
     Commits the transaction, which causes all of the modified records that
@@ -154,25 +193,22 @@ DS.Transaction = Ember.Object.extend({
   */
   commit: function() {
     var store = get(this, 'store');
-    var adapter = get(store, '_adapter');
-    var defaultTransaction = get(store, 'defaultTransaction');
 
-    if (this === defaultTransaction) {
+    if (get(this, 'isDefault')) {
       set(store, 'defaultTransaction', store.transaction());
     }
 
     this.removeCleanRecords();
-    var relationships = get(this, 'relationships');
 
-    var commitDetails = this._commitDetails();
+    var commitDetails = get(this, 'commitDetails'),
+        relationships = get(this, 'relationships');
 
-    if (!commitDetails.created.isEmpty() || !commitDetails.updated.isEmpty() || !commitDetails.deleted.isEmpty() || !commitDetails.relationships.isEmpty()) {
-
+    forEach(commitDetails, function(adapter, commitDetails) {
       Ember.assert("You tried to commit records but you have no adapter", adapter);
       Ember.assert("You tried to commit records but your adapter does not implement `commit`", adapter.commit);
 
       adapter.commit(store, commitDetails);
-    }
+    });
 
     // Once we've committed the transaction, there is no need to
     // keep the OneToManyChanges around. Destroy them so they
@@ -180,26 +216,6 @@ DS.Transaction = Ember.Object.extend({
     relationships.forEach(function(relationship) {
       relationship.destroy();
     });
-  },
-
-  _commitDetails: function() {
-    var relationships = get(this, 'relationships');
-    var commitDetails = {
-      created: Ember.OrderedSet.create(),
-      updated: Ember.OrderedSet.create(),
-      deleted: Ember.OrderedSet.create(),
-      relationships: relationships
-    };
-
-    var records = get(this, 'records');
-
-    records.forEach(function(record) {
-      if(!get(record, 'isDirty')) return;
-      record.send('willCommit');
-      commitDetails[get(record, 'dirtyType')].add(record);
-    });
-
-    return commitDetails;
   },
 
   /**
@@ -216,8 +232,6 @@ DS.Transaction = Ember.Object.extend({
     current transaction should not be used again.
   */
   rollback: function() {
-    var store = get(this, 'store');
-
     // Destroy all relationship changes and compute
     // all references affected
     var references = Ember.OrderedSet.create();
@@ -227,10 +241,9 @@ DS.Transaction = Ember.Object.extend({
       references.add(r.secondRecordReference);
       r.destroy();
     });
-    relationships.clear();
 
     var records = get(this, 'records');
-    records.forEach(function(record) {
+    forEach(records, function(record) {
       if (!record.get('isDirty')) return;
       record.send('rollback');
     });
@@ -242,7 +255,6 @@ DS.Transaction = Ember.Object.extend({
     // Remaining associated references are not part of the transaction, but
     // can still have hasMany's which have not been reloaded
     references.forEach(function(r) {
-
       if (r && r.record) {
         var record = r.record;
         record.suspendRelationshipObservers(function() {
@@ -276,11 +288,11 @@ DS.Transaction = Ember.Object.extend({
   */
   removeCleanRecords: function() {
     var records = get(this, 'records');
-    records.forEach(function(record) {
+    forEach(records, function(record) {
       if(!record.get('isDirty')) {
         this.remove(record);
       }
-    }, this); 
+    }, this);
   },
 
   /**

@@ -14,6 +14,7 @@ var get = Ember.get, set = Ember.set;
 var once = Ember.run.once;
 var isNone = Ember.isNone;
 var forEach = Ember.EnumerableUtils.forEach;
+var indexOf = Ember.EnumerableUtils.indexOf;
 var map = Ember.EnumerableUtils.map;
 
 // These values are used in the data cache when clientIds are
@@ -103,13 +104,6 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
     The init method registers this store as the default if none is specified.
   */
   init: function() {
-    // Enforce API revisioning. See BREAKING_CHANGES.md for more.
-    var revision = get(this, 'revision');
-
-    if (revision !== DS.CURRENT_API_REVISION && !Ember.ENV.TESTING) {
-      throw new Error("Error: The Ember Data library has had breaking API changes since the last time you updated the library. Please review the list of breaking changes at https://github.com/emberjs/data/blob/master/BREAKING_CHANGES.md, then update your store's `revision` property to " + DS.CURRENT_API_REVISION);
-    }
-
     if (!get(DS, 'defaultStore') || get(this, 'isDefaultStore')) {
       set(DS, 'defaultStore', this);
     }
@@ -164,7 +158,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
     @param {DS.Model} record
   */
   materializeData: function(record) {
-    var reference = get(record, 'reference'),
+    var reference = get(record, '_reference'),
         data = reference.data,
         adapter = this.adapterForType(record.constructor);
 
@@ -189,7 +183,10 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
     @property {DS.Adapter|String}
   */
   adapter: Ember.computed(function(){
-    Ember.debug("A custom DS.Adapter was not provided as the 'Adapter' property of your application's Store. The default (DS.RESTAdapter) will be used.");
+    if (!Ember.testing) {
+      Ember.debug("A custom DS.Adapter was not provided as the 'Adapter' property of your application's Store. The default (DS.RESTAdapter) will be used.");
+    }
+
     return 'DS.RESTAdapter';
   }).property(),
 
@@ -323,7 +320,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
 
     // Now that we have a reference, attach it to the record we
     // just created.
-    set(record, 'reference', reference);
+    set(record, '_reference', reference);
     reference.record = record;
 
     // Move the record out of its initial `empty` state into
@@ -473,12 +470,19 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
 
     if (reference.data === LOADING) {
       // let the adapter set the data, possibly async
-      var adapter = this.adapterForType(type);
+      var adapter = this.adapterForType(type),
+          store = this;
 
       Ember.assert("You tried to find a record but you have no adapter (for " + type + ")", adapter);
       Ember.assert("You tried to find a record but your adapter does not implement `find`", adapter.find);
 
-      adapter.find(this, type, id);
+      var thenable = adapter.find(this, type, id);
+
+      if (thenable && thenable.then) {
+        thenable.then(null /* for future use */, function(error) {
+          store.recordWasError(record);
+        });
+      }
     }
 
     return record;
@@ -487,13 +491,20 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
   reloadRecord: function(record) {
     var type = record.constructor,
         adapter = this.adapterForType(type),
+        store = this,
         id = get(record, 'id');
 
     Ember.assert("You cannot update a record without an ID", id);
     Ember.assert("You tried to update a record but you have no adapter (for " + type + ")", adapter);
     Ember.assert("You tried to update a record but your adapter does not implement `find`", adapter.find);
 
-    adapter.find(this, type, id);
+    var thenable = adapter.find(this, type, id);
+
+    if (thenable && thenable.then) {
+      thenable.then(null /* for future use */, function(error) {
+        store.recordWasError(record);
+      });
+    }
   },
 
   /**
@@ -501,7 +512,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
 
     This method returns a record for a given record refeence.
 
-    If no record for the reference has yet been materialzed, this method will
+    If no record for the reference has yet been materialized, this method will
     materialize a new `DS.Model` instance. This allows adapters to eagerly load
     large amounts of data into the store, and avoid incurring the cost of
     creating models until they are requested.
@@ -656,7 +667,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
 
       if (adapter && adapter.findHasMany) {
         adapter.findHasMany(this, record, relationship, idsOrReferencesOrOpaque);
-      } else if (idsOrReferencesOrOpaque !== undefined) {
+      } else if (!isNone(idsOrReferencesOrOpaque)) {
         Ember.assert("You tried to load many records but you have no adapter (for " + type + ")", adapter);
         Ember.assert("You tried to load many records but your adapter does not implement `findHasMany`", adapter.findHasMany);
       }
@@ -675,8 +686,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
 
     var unloadedReferences = this.unloadedReferences(references),
         manyArray = this.recordArrayManager.createManyArray(type, Ember.A(references)),
-        loadingRecordArrays = this.loadingRecordArrays,
-        reference, clientId, i, l;
+        reference, i, l;
 
     // Start the decrementing counter on the ManyArray at the number of
     // records we need to load from the adapter
@@ -909,9 +919,26 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
     }
   },
 
-  // .................
-  // . BASIC ADAPTER .
-  // .................
+  // ..............
+  // . PERSISTING .
+  // ..............
+
+  /**
+    This method delegates saving to the store's implicit
+    transaction.
+
+    Calling this method is essentially a request to persist
+    any changes to records that were not explicitly added to
+    a transaction.
+  */
+  save: function() {
+    once(this, 'commitDefaultTransaction');
+  },
+  commit: Ember.aliasMethod('save'),
+
+  commitDefaultTransaction: function() {
+    get(this, 'defaultTransaction').commit();
+  },
 
   scheduleSave: function(record) {
     get(this, 'currentTransaction').add(record);
@@ -921,33 +948,6 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
   flushSavedRecords: function() {
     get(this, 'currentTransaction').commit();
     set(this, 'currentTransaction', this.transaction());
-  },
-
-  // ..............
-  // . PERSISTING .
-  // ..............
-
-  /**
-    This method schedule a save of records in the default transaction.
-
-    Calling this method is essentially a request to persist
-    any changes to records that were not explicitly added to
-    a transaction.
-  */
-  save: function() {
-    once(this, 'commit');
-  },
-
-  /**
-    This method delegates committing to the store's implicit
-    transaction.
-
-    Calling this method is essentially a request to persist
-    any changes to records that were not explicitly added to
-    a transaction.
-  */
-  commit: function() {
-    get(this, 'defaultTransaction').commit();
   },
 
   /**
@@ -985,14 +985,14 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
     @param {Object} data optional data (see above)
   */
   didSaveRecord: function(record, data) {
-    record.adapterDidCommit();
-
     if (data) {
       this.updateId(record, data);
       this.updateRecordData(record, data);
     } else {
       this.didUpdateAttributes(record);
     }
+
+    record.adapterDidCommit();
   },
 
   /**
@@ -1012,7 +1012,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
   */
   didSaveRecords: function(list, dataList) {
     var i = 0;
-    list.forEach(function(record) {
+    forEach(list, function(record) {
       this.didSaveRecord(record, dataList && dataList[i++]);
     }, this);
   },
@@ -1191,7 +1191,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
     @param {DS.Model} relationshipName
   */
   didUpdateRelationship: function(record, relationshipName) {
-    var clientId = get(record, 'reference').clientId;
+    var clientId = get(record, '_reference').clientId;
 
     var relationship = this.relationshipChangeFor(clientId, relationshipName);
     //TODO(Igor)
@@ -1207,7 +1207,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
     `didUpdateRelationship` API.
   */
   didUpdateRelationships: function(record) {
-    var changes = this.relationshipChangesFor(get(record, 'reference'));
+    var changes = this.relationshipChangesFor(get(record, '_reference'));
 
     for (var name in changes) {
       if (!changes.hasOwnProperty(name)) { continue; }
@@ -1258,7 +1258,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
     @param {Object} data
   */
   updateRecordData: function(record, data) {
-    get(record, 'reference').data = data;
+    get(record, '_reference').data = data;
     record.didChangeData();
   },
 
@@ -1275,7 +1275,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
   updateId: function(record, data) {
     var type = record.constructor,
         typeMap = this.typeMapFor(type),
-        reference = get(record, 'reference'),
+        reference = get(record, '_reference'),
         oldId = get(record, 'id'),
         id = this.preprocessData(type, data);
 
@@ -1448,7 +1448,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
     var record = reference.type._create({
       id: reference.id,
       store: this,
-      reference: reference
+      _reference: reference
     });
 
     reference.record = record;
@@ -1465,7 +1465,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
   },
 
   dematerializeRecord: function(record) {
-    var reference = get(record, 'reference'),
+    var reference = get(record, '_reference'),
         type = reference.type,
         id = reference.id,
         typeMap = this.typeMapFor(type);
@@ -1474,7 +1474,7 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
 
     if (id) { delete typeMap.idToReference[id]; }
 
-    var loc = typeMap.references.indexOf(reference);
+    var loc = indexOf(typeMap.references, reference);
     typeMap.references.splice(loc, 1);
   },
 
@@ -1516,7 +1516,9 @@ DS.Store = Ember.Object.extend(DS._Mappable, {
     delete changes[clientId][parentClientId][key][type];
   },
 
-  relationshipChangeFor: function(clientId, childKey, parentClientId, parentKey, type) {
+  relationshipChangeFor: function(clientReference, childKey, parentReference, parentKey, type) {
+    var clientId = clientReference.clientId,
+        parentClientId = parentReference ? parentReference.clientId : parentReference;
     var changes = this.relationshipChanges;
     var key = childKey + parentKey;
     if (!(clientId in changes) || !(parentClientId in changes[clientId])){

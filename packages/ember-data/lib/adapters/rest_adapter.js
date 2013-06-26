@@ -1,7 +1,6 @@
 require("ember-data/core");
 require('ember-data/system/adapter');
 require('ember-data/serializers/rest_serializer');
-/*global jQuery*/
 
 /**
   @module data
@@ -9,6 +8,12 @@ require('ember-data/serializers/rest_serializer');
 */
 
 var get = Ember.get, set = Ember.set;
+
+DS.rejectionHandler = function(reason) {
+  Ember.Logger.assert([reason, reason.message, reason.stack]);
+
+  throw reason;
+};
 
 /**
   The REST adapter allows your store to communicate with an HTTP server by
@@ -82,7 +87,7 @@ DS.RESTAdapter = DS.Adapter.extend({
   },
 
   shouldSave: function(record) {
-    var reference = get(record, 'reference');
+    var reference = get(record, '_reference');
 
     return !reference.parent;
   },
@@ -131,7 +136,7 @@ DS.RESTAdapter = DS.Adapter.extend({
       this._dirtyTree(dirtySet, embeddedRecord);
     }, this);
 
-    var reference = record.get('reference');
+    var reference = record.get('_reference');
 
     if (reference.parent) {
       var store = get(record, 'store');
@@ -142,24 +147,24 @@ DS.RESTAdapter = DS.Adapter.extend({
 
   createRecord: function(store, type, record) {
     var root = this.rootForType(type);
-
+    var adapter = this;
     var data = {};
+
     data[root] = this.serialize(record, { includeId: true });
 
-    this.ajax(this.buildURL(root), "POST", {
-      data: data,
-      success: function(json) {
-        Ember.run(this, function(){
-          this.didCreateRecord(store, type, record, json);
-        });
-      },
-      error: function(xhr) {
-        this.didError(store, type, record, xhr);
-      }
-    });
+    return this.ajax(this.buildURL(root), "POST", {
+      data: data
+    }).then(function(json){
+      adapter.didCreateRecord(store, type, record, json);
+    }, function(xhr) {
+      adapter.didError(store, type, record, xhr);
+      throw xhr;
+    }).then(null, DS.rejectionHandler);
   },
 
   createRecords: function(store, type, records) {
+    var adapter = this;
+
     if (get(this, 'bulkCommit') === false) {
       return this._super(store, type, records);
     }
@@ -173,151 +178,144 @@ DS.RESTAdapter = DS.Adapter.extend({
       data[plural].push(this.serialize(record, { includeId: true }));
     }, this);
 
-    this.ajax(this.buildURL(root), "POST", {
-      data: data,
-      success: function(json) {
-        Ember.run(this, function(){
-          this.didCreateRecords(store, type, records, json);
-        });
-      }
-    });
+    return this.ajax(this.buildURL(root), "POST", {
+      data: data
+    }).then(function(json) {
+      adapter.didCreateRecords(store, type, records, json);
+    }).then(null, DS.rejectionHandler);
   },
 
   updateRecord: function(store, type, record) {
-    var id = get(record, 'id');
-    var root = this.rootForType(type);
+    var id, root, adapter, data;
 
-    var data = {};
+    id = get(record, 'id');
+    root = this.rootForType(type);
+    adapter = this;
+
+    data = {};
     data[root] = this.serialize(record);
 
-    this.ajax(this.buildURL(root, id), "PUT", {
-      data: data,
-      success: function(json) {
-        Ember.run(this, function(){
-          this.didUpdateRecord(store, type, record, json);
-        });
-      },
-      error: function(xhr) {
-        this.didError(store, type, record, xhr);
-      }
-    });
+    return this.ajax(this.buildURL(root, id), "PUT",{
+      data: data
+    }).then(function(json){
+      adapter.didUpdateRecord(store, type, record, json);
+    }, function(xhr) {
+      adapter.didError(store, type, record, xhr);
+      throw xhr;
+    }).then(null, DS.rejectionHandler);
   },
 
   updateRecords: function(store, type, records) {
+    var root, plural, adapter, data;
+
     if (get(this, 'bulkCommit') === false) {
       return this._super(store, type, records);
     }
 
-    var root = this.rootForType(type),
-        plural = this.pluralize(root);
+    root = this.rootForType(type);
+    plural = this.pluralize(root);
+    adapter = this;
 
-    var data = {};
+    data = {};
+
     data[plural] = [];
+
     records.forEach(function(record) {
       data[plural].push(this.serialize(record, { includeId: true }));
     }, this);
 
-    this.ajax(this.buildURL(root, "bulk"), "PUT", {
-      data: data,
-      success: function(json) {
-        Ember.run(this, function(){
-          this.didUpdateRecords(store, type, records, json);
-        });
-      }
-    });
+    return this.ajax(this.buildURL(root, "bulk"), "PUT", {
+      data: data
+    }).then(function(json) {
+      adapter.didUpdateRecords(store, type, records, json);
+    }).then(null, DS.rejectionHandler);
   },
 
   deleteRecord: function(store, type, record) {
-    var id = get(record, 'id');
-    var root = this.rootForType(type);
+    var id, root, adapter;
 
-    this.ajax(this.buildURL(root, id), "DELETE", {
-      success: function(json) {
-        Ember.run(this, function(){
-          this.didDeleteRecord(store, type, record, json);
-        });
-      },
-      error: function(xhr) {
-        this.didError(store, type, record, xhr);
-      }
-    });
+    id = get(record, 'id');
+    root = this.rootForType(type);
+    adapter = this;
+
+    return this.ajax(this.buildURL(root, id), "DELETE").then(function(json){
+      adapter.didDeleteRecord(store, type, record, json);
+    }, function(xhr){
+      adapter.didError(store, type, record, xhr);
+      throw xhr;
+    }).then(null, DS.rejectionHandler);
   },
 
   deleteRecords: function(store, type, records) {
+    var root, plural, serializer, adapter, data;
+
     if (get(this, 'bulkCommit') === false) {
       return this._super(store, type, records);
     }
 
-    var root = this.rootForType(type),
-        plural = this.pluralize(root),
-        serializer = get(this, 'serializer');
+    root = this.rootForType(type);
+    plural = this.pluralize(root);
+    serializer = get(this, 'serializer');
+    adapter = this;
 
-    var data = {};
+    data = {};
+
     data[plural] = [];
     records.forEach(function(record) {
       data[plural].push(serializer.serializeId( get(record, 'id') ));
     });
 
-    this.ajax(this.buildURL(root, 'bulk'), "DELETE", {
-      data: data,
-      success: function(json) {
-        Ember.run(this, function(){
-          this.didDeleteRecords(store, type, records, json);
-        });
-      }
-    });
+    return this.ajax(this.buildURL(root, 'bulk'), "DELETE", {
+      data: data
+    }).then(function(json){
+      adapter.didDeleteRecords(store, type, records, json);
+    }).then(null, DS.rejectionHandler);
   },
 
   find: function(store, type, id) {
-    var root = this.rootForType(type);
+    var root = this.rootForType(type), adapter = this;
 
-    this.ajax(this.buildURL(root, id), "GET", {
-      success: function(json) {
-        Ember.run(this, function(){
-          this.didFindRecord(store, type, json, id);
-        });
-      }
-    });
+    return this.ajax(this.buildURL(root, id), "GET").
+      then(function(json){
+        adapter.didFindRecord(store, type, json, id);
+    }).then(null, DS.rejectionHandler);
   },
 
   findAll: function(store, type, since) {
-    var root = this.rootForType(type);
+    var root, adapter;
 
-    this.ajax(this.buildURL(root), "GET", {
-      data: this.sinceQuery(since),
-      success: function(json) {
-        Ember.run(this, function(){
-          this.didFindAll(store, type, json);
-        });
-      }
-    });
+    root = this.rootForType(type);
+    adapter = this;
+
+    return this.ajax(this.buildURL(root), "GET",{
+      data: this.sinceQuery(since)
+    }).then(function(json) {
+      adapter.didFindAll(store, type, json);
+    }).then(null, DS.rejectionHandler);
   },
 
   findQuery: function(store, type, query, recordArray) {
-    var root = this.rootForType(type);
+    var root = this.rootForType(type),
+    adapter = this;
 
-    this.ajax(this.buildURL(root), "GET", {
-      data: query,
-      success: function(json) {
-        Ember.run(this, function(){
-          this.didFindQuery(store, type, json, recordArray);
-        });
-      }
-    });
+    return this.ajax(this.buildURL(root), "GET", {
+      data: query
+    }).then(function(json){
+      adapter.didFindQuery(store, type, json, recordArray);
+    }).then(null, DS.rejectionHandler);
   },
 
   findMany: function(store, type, ids, owner) {
-    var root = this.rootForType(type);
+    var root = this.rootForType(type),
+    adapter = this;
+
     ids = this.serializeIds(ids);
 
-    this.ajax(this.buildURL(root), "GET", {
-      data: {ids: ids},
-      success: function(json) {
-        Ember.run(this, function(){
-          this.didFindMany(store, type, json);
-        });
-      }
-    });
+    return this.ajax(this.buildURL(root), "GET", {
+      data: {ids: ids}
+    }).then(function(json) {
+      adapter.didFindMany(store, type, json);
+    }).then(null, DS.rejectionHandler);
   },
 
   /**
@@ -325,7 +323,7 @@ DS.RESTAdapter = DS.Adapter.extend({
 
     This method serializes a list of IDs using `serializeId`
 
-    @returns {Array} an array of serialized IDs
+    @return {Array} an array of serialized IDs
   */
   serializeIds: function(ids) {
     var serializer = get(this, 'serializer');
@@ -348,17 +346,30 @@ DS.RESTAdapter = DS.Adapter.extend({
   },
 
   ajax: function(url, type, hash) {
-    hash.url = url;
-    hash.type = type;
-    hash.dataType = 'json';
-    hash.contentType = 'application/json; charset=utf-8';
-    hash.context = this;
+    var adapter = this;
 
-    if (hash.data && type !== 'GET') {
-      hash.data = JSON.stringify(hash.data);
-    }
+    return new Ember.RSVP.Promise(function(resolve, reject) {
+      hash = hash || {};
+      hash.url = url;
+      hash.type = type;
+      hash.dataType = 'json';
+      hash.context = adapter;
 
-    jQuery.ajax(hash);
+      if (hash.data && type !== 'GET') {
+        hash.contentType = 'application/json; charset=utf-8';
+        hash.data = JSON.stringify(hash.data);
+      }
+
+      hash.success = function(json) {
+        Ember.run(null, resolve, json);
+      };
+
+      hash.error = function(jqXHR, textStatus, errorThrown) {
+        Ember.run(null, reject, jqXHR);
+      };
+
+      Ember.$.ajax(hash);
+    });
   },
 
   url: "",
@@ -398,4 +409,3 @@ DS.RESTAdapter = DS.Adapter.extend({
     return since ? query : null;
   }
 });
-

@@ -48,6 +48,22 @@ test("Referencing a null belongsTo relationship returns null", function(){
   equal(comment.get('post'), null, "null belongsTo relationship returns null");
 });
 
+test("Referencing an undefined hasMany relationship returns empty array", function() {
+  store.load(App.Post, {id: 1, title: "parent with undefined children"});
+  var post = store.find(App.Post, 1);
+  ok(post.get('comments'), "able to get the post's comments");
+  equal(post.get('comments.length'), 0, "undefined hasMany relationship returns empty array");
+  deepEqual(post.get('comments').toArray(), [], "comments is empty array");
+});
+
+test("Referencing a null hasMany relationship returns empty array", function(){
+  store.load(App.Post, { id: 1, comments: null, title: "parent with children set to null" });
+  var post = store.find(App.Post, 1);
+  ok(post.get('comments'), "able to get the post's comments");
+  equal(post.get('comments.length'), 0, "null masMany relationship returns empty array");
+  deepEqual(post.get('comments').toArray(), [], "comments is an empty array");
+});
+
 test("When setting a record's belongsTo relationship to another record, that record should be added to the inverse hasMany array", function() {
   store.load(App.Post, { id: 1, title: "parent" });
   store.load(App.Comment, { id: 2, body: "child" });
@@ -178,19 +194,3 @@ test("Deleting a newly created record removes it from any inverse hasMany arrays
   equal(comment.get('post'), null, "the comment should no longer belong to a post");
   deepEqual(post.get('comments').toArray(), [], "the post should no longer have any comments");
 });
-
-//test("When a record with a hasMany relationship is deleted, its associated record is materialized and its belongsTo is changed", function() {
-  //store.load(App.Post, { id: 1, title: "NEW! Ember Table", comments: [ 2 ] });
-  //store.load(App.Comment, { id: 2, body: "Needs more async", post: 1 });
-
-  //// Only find the post, not the comment. This ensures
-  //// that the comment is not yet materialized.
-  //var post = store.find(App.Post, 1);
-  //var comment = store.find(App.Comment, 2);
-  //post.deleteRecord();
-
-  //// Now that we've deleted the post, we should materialize the
-  //// comment and ensure that its inverse relationship has been
-  //// modified appropriately (i.e., set to null)
-  //equal(comment.get('post'), null, "the comment's post belongsTo relationship was set to null");
-//});

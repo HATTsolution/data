@@ -1,4 +1,4 @@
-var get = Ember.get, set = Ember.set, forEach = Ember.ArrayPolyfills.forEach;
+var get = Ember.get, set = Ember.set, forEach = Ember.EnumerableUtils.forEach;
 
 require("ember-data/system/model/model");
 
@@ -35,25 +35,25 @@ DS.hasMany = function(type, options) {
 };
 
 function clearUnmaterializedHasMany(record, relationship) {
-  var store = get(record, 'store'),
-      data = get(record, 'data').hasMany;
+  var data = get(record, 'data').hasMany;
 
   var references = data[relationship.key];
 
   if (!references) { return; }
 
-  var inverseName = record.constructor.inverseFor(relationship.key).name;
+  var inverse = record.constructor.inverseFor(relationship.key);
 
+  if (inverse) {
+    forEach(references, function(reference) {
+      var childRecord;
 
-  forEach.call(references, function(reference) {
-    var childRecord;
-
-    if (childRecord = reference.record) {
-      record.suspendRelationshipObservers(function() {
-        set(childRecord, inverseName, null);
-      });
-    }
-  });
+      if (childRecord = reference.record) {
+        record.suspendRelationshipObservers(function() {
+          set(childRecord, inverse.name, null);
+        });
+      }
+    });
+  }
 }
 
 DS.Model.reopen({
